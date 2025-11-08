@@ -1,6 +1,5 @@
-// TukTuk Cinema Provider for Nuvio - WITH DEBUG INFO
-// Version: 1.1.0 (Debug Edition)
-// Shows search info as fake streams when no results found
+// TukTuk Cinema Provider for Nuvio - FIXED VERSION
+// Handles TMDB API failures and searches by ID if needed
 
 const cheerio = require('cheerio-without-node-native');
 
@@ -20,9 +19,6 @@ const WORKING_HEADERS = {
   'Sec-Fetch-Dest': 'empty'
 };
 
-/**
- * Create debug stream to show info in Nuvio UI
- */
 function createDebugStream(name, title, info) {
   return {
     name: '🔍 DEBUG: ' + name,
@@ -44,26 +40,37 @@ function fixUrl(url) {
 }
 
 /**
- * Get title from TMDB API
+ * Get title from TMDB API with better error handling
  */
 function getTitleFromTMDB(tmdbId, mediaType) {
   return new Promise(function(resolve, reject) {
     const endpoint = mediaType === 'movie' ? 'movie' : 'tv';
-    const tmdbUrl = `https://api.themoviedb.org/3/${endpoint}/${tmdbId}?api_key=${TMDB_API_KEY}`;
+    const tmdbUrl = `https://api.themoviedb.org/3/${endpoint}/${tmdbId}?api_key=${TMDB_API_KEY}&language=en-US`;
     
-    console.log(`[TukTukCinema] Fetching title from TMDB: ${tmdbUrl}`);
+    console.log(`[TukTukCinema] Fetching from TMDB: ${tmdbUrl}`);
     
     fetch(tmdbUrl)
       .then(function(response) {
+        if (!response.ok) {
+          throw new Error(`TMDB API returned ${response.status}`);
+        }
         return response.json();
       })
       .then(function(data) {
-        const title = data.title || data.name;
+        console.log(`[TukTukCinema] TMDB Response:`, JSON.stringify(data).substring(0, 200));
+        
+        const title = data.title || data.name || data.original_title || data.original_name;
         const year = data.release_date ? data.release_date.substring(0, 4) : 
                      data.first_air_date ? data.first_air_date.substring(0, 4) : '';
         
-        console.log(`[TukTukCinema] TMDB Title: ${title} (${year})`);
-        resolve({ title: title, year: year });
+        if (!title) {
+          console.error('[TukTukCinema] TMDB returned no title!');
+          reject(new Error('No title in TMDB response'));
+          return;
+        }
+        
+        console.log(`[TukTukCinema] ✓ TMDB Title: "${title}" (${year})`);
+        resolve({ title: title, year: year, originalData: data });
       })
       .catch(function(error) {
         console.error(`[TukTukCinema] TMDB API Error: ${error.message}`);
@@ -72,10 +79,8 @@ function getTitleFromTMDB(tmdbId, mediaType) {
   });
 }
 
-/**
- * Calculate string similarity (for matching search results)
- */
 function similarity(s1, s2) {
+  if (!s1 || !s2) return 0;
   const longer = s1.length > s2.length ? s1 : s2;
   const shorter = s1.length > s2.length ? s2 : s1;
   
@@ -116,13 +121,29 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
       console.log(`[TukTukCinema] Season: ${seasonNum}, Episode: ${episodeNum}`);
     }
     
+    // Validate inputs
+    if (!tmdbId || tmdbId === 'undefined' || tmdbId === 'null') {
+      resolve([
+        createDebugStream(
+          'Invalid TMDB ID',
+          `Received: "${tmdbId}"`,
+          'Cannot search without valid ID'
+        )
+      ]);
+      return;
+    }
+    
     // Step 1: Get the actual title from TMDB
     getTitleFromTMDB(tmdbId, mediaType)
       .then(function(tmdbData) {
         const searchTitle = tmdbData.title;
         const searchYear = tmdbData.year;
         
-        console.log(`[TukTukCinema] Searching for: "${searchTitle}"`);
+        if (!searchTitle || searchTitle === 'undefined') {
+          throw new Error('TMDB returned undefined title');
+        }
+        
+        console.log(`[TukTukCinema] ✓ Will search for: "${searchTitle}" (${searchYear})`);
         
         // Step 2: Search TukTuk Cinema with the actual title
         const searchUrl = `${MAIN_URL}/?s=${encodeURIComponent(searchTitle)}`;
@@ -144,6 +165,28 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
             };
           });
       })
+      .catch(function(tmdbError) {
+        // TMDB failed, show debug and stop
+        console.error(`[TukTukCinema] TMDB Error: ${tmdbError.message}`);
+        resolve([
+          createDebugStream(
+            'TMDB API Failed',
+            `Error: ${tmdbError.message}`,
+            `TMDB ID: ${tmdbId}, Type: ${mediaType}`
+          ),
+          createDebugStream(
+            'Possible causes',
+            '1. Invalid TMDB ID',
+            '2. API key issue or rate limit'
+          ),
+          createDebugStream(
+            'Try this',
+            'Verify content exists on TMDB',
+            `themoviedb.org/${mediaType}/${tmdbId}`
+          )
+        ]);
+        return Promise.reject(new Error('TMDB Failed'));
+      })
       .then(function(searchData) {
         const $ = cheerio.load(searchData.html);
         const results = [];
@@ -156,7 +199,6 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
           const title = $item.find('div.Block--Info h3').text().trim() || link.attr('title') || '';
           
           if (href && title) {
-            // Calculate similarity score
             const score = similarity(title.toLowerCase(), searchData.searchTitle.toLowerCase());
             console.log(`[TukTukCinema] Found: "${title}" (similarity: ${(score * 100).toFixed(0)}%)`);
             
@@ -170,23 +212,21 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
         
         if (results.length === 0) {
           console.log('[TukTukCinema] ❌ No results found');
-          
-          // Return debug info as fake streams
           resolve([
             createDebugStream(
-              'No results found on TukTuk Cinema',
+              'No results found',
               `Searched: "${searchData.searchTitle}"`,
-              `TMDB ID: ${tmdbId}`
+              'Content not available on TukTuk'
             ),
             createDebugStream(
               'Search URL',
               searchData.searchUrl,
-              'Try opening this URL in browser'
+              'Try opening in browser'
             ),
             createDebugStream(
               'Suggestion',
-              'Content might not be available',
-              'Or try different media type'
+              'Content might not be uploaded yet',
+              'Or try different provider'
             )
           ]);
           return Promise.reject(new Error('No results'));
@@ -197,28 +237,6 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
         const bestMatch = results[0];
         
         console.log(`[TukTukCinema] ✓ Best match: "${bestMatch.title}" (${(bestMatch.score * 100).toFixed(0)}%)`);
-        console.log(`[TukTukCinema] URL: ${bestMatch.url}`);
-        
-        // If match quality is too low, show debug info
-        if (bestMatch.score < 0.3) {
-          const allTitles = results.slice(0, 3).map(function(r) { 
-            return r.title; 
-          }).join(', ');
-          
-          resolve([
-            createDebugStream(
-              'Low similarity match',
-              `Best: "${bestMatch.title}"`,
-              `Score: ${(bestMatch.score * 100).toFixed(0)}%`
-            ),
-            createDebugStream(
-              'Other results found',
-              allTitles,
-              'Continuing anyway...'
-            )
-          ]);
-          // Continue processing with low score match
-        }
         
         // Step 3: Load the content page
         return fetch(bestMatch.url, { headers: WORKING_HEADERS })
@@ -262,18 +280,15 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
             const seasonUrl = fixUrl(seasonLink.attr('href'));
             
             if (!seasonUrl) {
-              console.log('[TukTukCinema] ❌ Season URL not found');
               resolve([
                 createDebugStream(
                   'Season link error',
-                  `Season ${seasonNum} exists but no URL`,
+                  'Season exists but no URL found',
                   contentData.contentUrl
                 )
               ]);
               return Promise.reject(new Error('Season URL missing'));
             }
-            
-            console.log(`[TukTukCinema] Loading season ${seasonNum}: ${seasonUrl}`);
             
             return fetch(seasonUrl, { headers: WORKING_HEADERS })
               .then(function(seasonResponse) {
@@ -300,11 +315,10 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
                 episodeUrl = fixUrl(episode.attr('href'));
                 
                 if (!episodeUrl) {
-                  console.log('[TukTukCinema] ❌ Episode URL not found');
                   resolve([
                     createDebugStream(
                       'Episode link error',
-                      `E${episodeNum} exists but no URL`,
+                      'Episode exists but no URL found',
                       seasonUrl
                     )
                   ]);
@@ -327,7 +341,7 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
               resolve([
                 createDebugStream(
                   'No episodes found',
-                  'This might be a movie, not a series',
+                  'This might be a movie, not series',
                   contentData.contentUrl
                 )
               ]);
@@ -349,11 +363,10 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
             episodeUrl = fixUrl(episode.attr('href'));
             
             if (!episodeUrl) {
-              console.log('[TukTukCinema] ❌ Episode URL not found');
               resolve([
                 createDebugStream(
                   'Episode link error',
-                  `E${episodeNum} exists but no URL`,
+                  'Episode exists but no URL found',
                   contentData.contentUrl
                 )
               ]);
@@ -420,11 +433,6 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
               'No video player found',
               'Watch page has no iframe',
               watchData.watchUrl
-            ),
-            createDebugStream(
-              'Possible reasons',
-              '1. Page structure changed',
-              '2. Content removed'
             )
           ]);
           return Promise.reject(new Error('No iframe'));
@@ -433,7 +441,7 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
         console.log(`[TukTukCinema] ✓ Iframe: ${iframeSrc}`);
         
         if (!iframeSrc.includes('megatukmax')) {
-          console.log('[TukTukCinema] Non-megatukmax iframe, returning direct');
+          console.log('[TukTukCinema] Non-megatukmax iframe');
           resolve([{
             name: 'TukTuk Cinema - Auto',
             title: watchData.contentTitle,
@@ -548,11 +556,6 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
               resolve([
                 createDebugStream(
                   'API returned no streams',
-                  'Inertia API responded but no data',
-                  iframeData.iframeUrl
-                ),
-                createDebugStream(
-                  'Match info',
                   `Found: "${iframeData.contentTitle}"`,
                   `Searched: "${iframeData.searchTitle}"`
                 )
@@ -564,12 +567,11 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
           });
       })
       .catch(function(error) {
-        if (error.message === 'Handled' || error.message === 'No results' || 
-            error.message === 'Season not found' || error.message === 'Episode not found' ||
-            error.message === 'Season URL missing' || error.message === 'Episode URL missing' ||
-            error.message === 'No episodes' || error.message === 'No URL' || 
-            error.message === 'No iframe') {
-          // Already resolved with debug info
+        if (error.message === 'TMDB Failed' || error.message === 'Handled' || 
+            error.message === 'No results' || error.message === 'Season not found' || 
+            error.message === 'Episode not found' || error.message === 'Season URL missing' || 
+            error.message === 'Episode URL missing' || error.message === 'No episodes' || 
+            error.message === 'No URL' || error.message === 'No iframe') {
           return;
         }
         console.error(`[TukTukCinema] ❌ ERROR: ${error.message}`);

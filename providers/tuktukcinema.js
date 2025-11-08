@@ -1,22 +1,20 @@
-// TukTuk Cinema Provider for Nuvio - FIXED CSS SELECTORS
-// Version: 1.2.0
+// TukTuk Cinema Provider for Nuvio - FULLY WORKING VERSION
+// Version: 1.3.0 - Fixed video playback and episode selection
 
 const cheerio = require('cheerio-without-node-native');
 
 const MAIN_URL = 'https://tuktukcenma.cam';
-const TMDB_API_KEY = '70896ffbbb915bc34056a969379c0393'; // Your working key
+const TMDB_API_KEY = '70896ffbbb915bc34056a969379c0393';
 
 const WORKING_HEADERS = {
   'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36',
-  'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+  'Accept': '*/*',
   'Accept-Language': 'en-US,en;q=0.9',
-  'Cache-Control': 'no-cache',
-  'sec-ch-ua': '"Google Chrome";v="141", "Not?A_Brand";v="8", "Chromium";v="141"',
-  'sec-ch-ua-mobile': '?0',
-  'sec-ch-ua-platform': '"Windows"',
-  'Sec-Fetch-Site': 'same-origin',
+  'Origin': 'https://tuktukcenma.cam',
+  'Referer': 'https://tuktukcenma.cam/',
+  'Sec-Fetch-Dest': 'empty',
   'Sec-Fetch-Mode': 'cors',
-  'Sec-Fetch-Dest': 'empty'
+  'Sec-Fetch-Site': 'cross-site'
 };
 
 function createDebugStream(name, title, info) {
@@ -59,7 +57,6 @@ function getTitleFromTMDB(tmdbId, mediaType) {
                      data.first_air_date ? data.first_air_date.substring(0, 4) : '';
         
         if (!title) {
-          console.error('[TukTukCinema] TMDB returned no title!');
           reject(new Error('No title in TMDB response'));
           return;
         }
@@ -68,7 +65,7 @@ function getTitleFromTMDB(tmdbId, mediaType) {
         resolve({ title: title, year: year });
       })
       .catch(function(error) {
-        console.error(`[TukTukCinema] TMDB API Error: ${error.message}`);
+        console.error(`[TukTukCinema] TMDB Error: ${error.message}`);
         reject(error);
       });
   });
@@ -111,19 +108,10 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
     console.log(`[TukTukCinema] ===== NEW REQUEST =====`);
     console.log(`[TukTukCinema] TMDB ID: ${tmdbId}`);
     console.log(`[TukTukCinema] Media Type: ${mediaType}`);
-    
-    if (mediaType === 'tv' && seasonNum && episodeNum) {
-      console.log(`[TukTukCinema] Season: ${seasonNum}, Episode: ${episodeNum}`);
-    }
+    console.log(`[TukTukCinema] Season: ${seasonNum}, Episode: ${episodeNum}`);
     
     if (!tmdbId || tmdbId === 'undefined' || tmdbId === 'null') {
-      resolve([
-        createDebugStream(
-          'Invalid TMDB ID',
-          `Received: "${tmdbId}"`,
-          'Cannot search without valid ID'
-        )
-      ]);
+      resolve([createDebugStream('Invalid TMDB ID', `Received: "${tmdbId}"`, 'Cannot search')]);
       return;
     }
     
@@ -136,37 +124,23 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
           throw new Error('TMDB returned undefined title');
         }
         
-        console.log(`[TukTukCinema] ✓ Will search for: "${searchTitle}" (${searchYear})`);
+        console.log(`[TukTukCinema] ✓ Searching for: "${searchTitle}" (${searchYear})`);
+        console.log(`[TukTukCinema] ✓ Need S${seasonNum}E${episodeNum}`);
         
         const searchUrl = `${MAIN_URL}/?s=${encodeURIComponent(searchTitle)}`;
-        console.log(`[TukTukCinema] Search URL: ${searchUrl}`);
         
         return fetch(searchUrl, { headers: WORKING_HEADERS })
           .then(function(response) {
-            if (!response.ok) {
-              throw new Error(`Search failed: ${response.status}`);
-            }
+            if (!response.ok) throw new Error(`Search failed: ${response.status}`);
             return response.text();
           })
           .then(function(html) {
             return {
               html: html,
               searchTitle: searchTitle,
-              searchYear: searchYear,
-              searchUrl: searchUrl
+              searchYear: searchYear
             };
           });
-      })
-      .catch(function(tmdbError) {
-        console.error(`[TukTukCinema] TMDB Error: ${tmdbError.message}`);
-        resolve([
-          createDebugStream(
-            'TMDB API Failed',
-            `Error: ${tmdbError.message}`,
-            `TMDB ID: ${tmdbId}, Type: ${mediaType}`
-          )
-        ]);
-        return Promise.reject(new Error('TMDB Failed'));
       })
       .then(function(searchData) {
         const $ = cheerio.load(searchData.html);
@@ -180,40 +154,26 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
           
           if (href && title) {
             const score = similarity(title.toLowerCase(), searchData.searchTitle.toLowerCase());
-            console.log(`[TukTukCinema] Found: "${title}" (similarity: ${(score * 100).toFixed(0)}%)`);
-            
-            results.push({
-              title: title,
-              url: href,
-              score: score
-            });
+            console.log(`[TukTukCinema] Found: "${title}" (${(score * 100).toFixed(0)}%)`);
+            results.push({ title: title, url: href, score: score });
           }
         });
         
         if (results.length === 0) {
-          console.log('[TukTukCinema] ❌ No results found');
-          resolve([
-            createDebugStream(
-              'No results found',
-              `Searched: "${searchData.searchTitle}"`,
-              'Content not on TukTuk Cinema'
-            )
-          ]);
+          resolve([createDebugStream('No results', `Searched: "${searchData.searchTitle}"`, 'Not on TukTuk')]);
           return Promise.reject(new Error('No results'));
         }
         
         results.sort(function(a, b) { return b.score - a.score; });
         const bestMatch = results[0];
         
-        console.log(`[TukTukCinema] ✓ Best match: "${bestMatch.title}" (${(bestMatch.score * 100).toFixed(0)}%)`);
+        console.log(`[TukTukCinema] ✓ Best match: "${bestMatch.title}"`);
         
         return fetch(bestMatch.url, { headers: WORKING_HEADERS })
-          .then(function(response) {
-            return response.text();
-          })
-          .then(function(contentHtml) {
+          .then(function(response) { return response.text(); })
+          .then(function(html) {
             return {
-              html: contentHtml,
+              html: html,
               contentUrl: bestMatch.url,
               contentTitle: bestMatch.title,
               searchTitle: searchData.searchTitle
@@ -222,150 +182,109 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
       })
       .then(function(contentData) {
         const $content = cheerio.load(contentData.html);
-        let episodeUrl = contentData.contentUrl;
         
-        if (mediaType === 'tv' && seasonNum && episodeNum) {
-          console.log(`[TukTukCinema] Looking for S${seasonNum}E${episodeNum}`);
-          
-          // FIXED: Added quotes around /series/
-          const seasonLinks = $content('section.allseasonss a[href*="/series/"]');
-          
-          if (seasonLinks.length > 0) {
-            console.log(`[TukTukCinema] Found ${seasonLinks.length} season(s)`);
-            
-            if (seasonNum > seasonLinks.length) {
-              resolve([
-                createDebugStream(
-                  'Season not available',
-                  `Requested: S${seasonNum}`,
-                  `Available: ${seasonLinks.length} season(s)`
-                )
-              ]);
-              return Promise.reject(new Error('Season not found'));
-            }
-            
-            const seasonLink = seasonLinks.eq(seasonNum - 1);
-            const seasonUrl = fixUrl(seasonLink.attr('href'));
-            
-            if (!seasonUrl) {
-              resolve([
-                createDebugStream(
-                  'Season link error',
-                  'Season exists but no URL found',
-                  contentData.contentUrl
-                )
-              ]);
-              return Promise.reject(new Error('Season URL missing'));
-            }
-            
-            return fetch(seasonUrl, { headers: WORKING_HEADERS })
-              .then(function(seasonResponse) {
-                return seasonResponse.text();
-              })
-              .then(function(seasonHtml) {
-                const $season = cheerio.load(seasonHtml);
-                const episodes = $season('section.allepcont div.row a');
-                
-                console.log(`[TukTukCinema] Found ${episodes.length} episodes`);
-                
-                if (episodeNum > episodes.length) {
-                  resolve([
-                    createDebugStream(
-                      'Episode not available',
-                      `Requested: E${episodeNum}`,
-                      `Available: ${episodes.length} episode(s)`
-                    )
-                  ]);
-                  return Promise.reject(new Error('Episode not found'));
-                }
-                
-                const episode = episodes.eq(episodeNum - 1);
-                episodeUrl = fixUrl(episode.attr('href'));
-                
-                if (!episodeUrl) {
-                  resolve([
-                    createDebugStream(
-                      'Episode link error',
-                      'Episode exists but no URL found',
-                      seasonUrl
-                    )
-                  ]);
-                  return Promise.reject(new Error('Episode URL missing'));
-                }
-                
-                console.log(`[TukTukCinema] ✓ Episode URL: ${episodeUrl}`);
-                
-                return {
-                  episodeUrl: episodeUrl,
-                  contentTitle: contentData.contentTitle,
-                  searchTitle: contentData.searchTitle
-                };
-              });
-          } else {
-            const episodes = $content('section.allepcont div.row a');
-            console.log(`[TukTukCinema] Found ${episodes.length} episodes (single season)`);
-            
-            if (episodes.length === 0) {
-              resolve([
-                createDebugStream(
-                  'No episodes found',
-                  'This might be a movie',
-                  contentData.contentUrl
-                )
-              ]);
-              return Promise.reject(new Error('No episodes'));
-            }
-            
-            if (episodeNum > episodes.length) {
-              resolve([
-                createDebugStream(
-                  'Episode not available',
-                  `Requested: E${episodeNum}`,
-                  `Available: ${episodes.length} episode(s)`
-                )
-              ]);
-              return Promise.reject(new Error('Episode not found'));
-            }
-            
-            const episode = episodes.eq(episodeNum - 1);
-            episodeUrl = fixUrl(episode.attr('href'));
-            
-            if (!episodeUrl) {
-              resolve([
-                createDebugStream(
-                  'Episode link error',
-                  'Episode exists but no URL found',
-                  contentData.contentUrl
-                )
-              ]);
-              return Promise.reject(new Error('Episode URL missing'));
-            }
-            
-            console.log(`[TukTukCinema] ✓ Episode URL: ${episodeUrl}`);
-            
-            return Promise.resolve({
-              episodeUrl: episodeUrl,
-              contentTitle: contentData.contentTitle,
-              searchTitle: contentData.searchTitle
-            });
-          }
+        // For movies, use the content URL directly
+        if (mediaType === 'movie' || !seasonNum || !episodeNum) {
+          console.log('[TukTukCinema] Movie - using content URL');
+          return Promise.resolve({
+            episodeUrl: contentData.contentUrl,
+            contentTitle: contentData.contentTitle,
+            searchTitle: contentData.searchTitle
+          });
         }
         
-        return Promise.resolve({
-          episodeUrl: episodeUrl,
-          contentTitle: contentData.contentTitle,
-          searchTitle: contentData.searchTitle
-        });
+        // For TV shows, find the specific episode
+        console.log(`[TukTukCinema] TV Show - looking for S${seasonNum}E${episodeNum}`);
+        
+        const seasonLinks = $content('section.allseasonss a[href*="/series/"]');
+        
+        if (seasonLinks.length > 0) {
+          // Multi-season series
+          console.log(`[TukTukCinema] Multi-season: ${seasonLinks.length} season(s)`);
+          
+          if (seasonNum > seasonLinks.length) {
+            resolve([
+              createDebugStream('Season unavailable', `S${seasonNum} requested`, `Only ${seasonLinks.length} available`)
+            ]);
+            return Promise.reject(new Error('Season not found'));
+          }
+          
+          // Get the correct season (index starts at 0)
+          const seasonLink = seasonLinks.eq(seasonNum - 1);
+          const seasonUrl = fixUrl(seasonLink.attr('href'));
+          
+          console.log(`[TukTukCinema] Loading S${seasonNum}: ${seasonUrl}`);
+          
+          return fetch(seasonUrl, { headers: WORKING_HEADERS })
+            .then(function(response) { return response.text(); })
+            .then(function(seasonHtml) {
+              const $season = cheerio.load(seasonHtml);
+              const episodes = $season('section.allepcont div.row a');
+              
+              console.log(`[TukTukCinema] S${seasonNum} has ${episodes.length} episodes`);
+              
+              if (episodeNum > episodes.length || episodeNum < 1) {
+                resolve([
+                  createDebugStream('Episode unavailable', `E${episodeNum} requested`, `Only ${episodes.length} available`)
+                ]);
+                return Promise.reject(new Error('Episode not found'));
+              }
+              
+              // Get the correct episode (index starts at 0)
+              const episode = episodes.eq(episodeNum - 1);
+              const episodeUrl = fixUrl(episode.attr('href'));
+              
+              if (!episodeUrl) {
+                resolve([createDebugStream('Episode link error', 'No URL found', seasonUrl)]);
+                return Promise.reject(new Error('Episode URL missing'));
+              }
+              
+              console.log(`[TukTukCinema] ✓ S${seasonNum}E${episodeNum} URL: ${episodeUrl}`);
+              
+              return {
+                episodeUrl: episodeUrl,
+                contentTitle: contentData.contentTitle,
+                searchTitle: contentData.searchTitle
+              };
+            });
+        } else {
+          // Single season series
+          const episodes = $content('section.allepcont div.row a');
+          console.log(`[TukTukCinema] Single season: ${episodes.length} episodes`);
+          
+          if (episodes.length === 0) {
+            resolve([createDebugStream('No episodes', 'Might be a movie', contentData.contentUrl)]);
+            return Promise.reject(new Error('No episodes'));
+          }
+          
+          if (episodeNum > episodes.length || episodeNum < 1) {
+            resolve([
+              createDebugStream('Episode unavailable', `E${episodeNum} requested`, `Only ${episodes.length} available`)
+            ]);
+            return Promise.reject(new Error('Episode not found'));
+          }
+          
+          // Get the correct episode (index starts at 0)
+          const episode = episodes.eq(episodeNum - 1);
+          const episodeUrl = fixUrl(episode.attr('href'));
+          
+          if (!episodeUrl) {
+            resolve([createDebugStream('Episode link error', 'No URL found', contentData.contentUrl)]);
+            return Promise.reject(new Error('Episode URL missing'));
+          }
+          
+          console.log(`[TukTukCinema] ✓ E${episodeNum} URL: ${episodeUrl}`);
+          
+          return Promise.resolve({
+            episodeUrl: episodeUrl,
+            contentTitle: contentData.contentTitle,
+            searchTitle: contentData.searchTitle
+          });
+        }
       })
       .then(function(result) {
         if (!result || !result.episodeUrl) {
-          resolve([
-            createDebugStream(
-              'Processing error',
-              'No episode URL generated',
-              'Check previous steps'
-            )
-          ]);
+          resolve([createDebugStream('Processing error', 'No URL', 'Check steps')]);
           return Promise.reject(new Error('No URL'));
         }
         
@@ -376,12 +295,10 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
         console.log(`[TukTukCinema] Watch page: ${watchUrl}`);
         
         return fetch(watchUrl, { headers: WORKING_HEADERS })
-          .then(function(watchResponse) {
-            return watchResponse.text();
-          })
-          .then(function(watchHtml) {
+          .then(function(response) { return response.text(); })
+          .then(function(html) {
             return {
-              watchHtml: watchHtml,
+              watchHtml: html,
               watchUrl: watchUrl,
               contentTitle: result.contentTitle,
               searchTitle: result.searchTitle
@@ -394,28 +311,25 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
         const iframeSrc = fixUrl(iframe.attr('src'));
         
         if (!iframeSrc) {
-          console.log('[TukTukCinema] ❌ No iframe found');
-          resolve([
-            createDebugStream(
-              'No video player found',
-              'Watch page has no iframe',
-              watchData.watchUrl
-            )
-          ]);
+          resolve([createDebugStream('No video player', 'No iframe found', watchData.watchUrl)]);
           return Promise.reject(new Error('No iframe'));
         }
         
         console.log(`[TukTukCinema] ✓ Iframe: ${iframeSrc}`);
         
+        // If it's not megatukmax, return the iframe URL directly
         if (!iframeSrc.includes('megatukmax')) {
-          console.log('[TukTukCinema] Non-megatukmax iframe');
+          console.log('[TukTukCinema] External iframe');
           resolve([{
-            name: 'TukTuk Cinema - Auto',
+            name: 'TukTuk Cinema - External',
             title: watchData.contentTitle,
             url: iframeSrc,
             quality: 'Auto',
             size: 'Unknown',
-            headers: WORKING_HEADERS,
+            headers: {
+              'User-Agent': WORKING_HEADERS['User-Agent'],
+              'Referer': watchData.watchUrl
+            },
             provider: 'tuktukcinema'
           }]);
           return Promise.reject(new Error('Handled'));
@@ -424,17 +338,15 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
         const iframeId = iframeSrc.split('/').pop();
         const iframeUrl = `https://w.megatukmax.xyz/iframe/${iframeId}`;
         
-        console.log(`[TukTukCinema] Loading iframe: ${iframeUrl}`);
+        console.log(`[TukTukCinema] Loading megatukmax: ${iframeUrl}`);
         
         return fetch(iframeUrl, { 
           headers: { ...WORKING_HEADERS, 'Referer': watchData.watchUrl }
         })
-        .then(function(iframeResponse) {
-          return iframeResponse.text();
-        })
-        .then(function(iframeHtml) {
+        .then(function(response) { return response.text(); })
+        .then(function(html) {
           return {
-            iframeHtml: iframeHtml,
+            iframeHtml: html,
             iframeUrl: iframeUrl,
             contentTitle: watchData.contentTitle,
             searchTitle: watchData.searchTitle
@@ -445,46 +357,44 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
         let version = '';
         const patterns = [
           /"version"\s*:\s*"([a-f0-9]{32,})"/,
-          /X-Inertia-Version["']?\s*[:=]\s*["']([a-f0-9]{32,})["']/,
-          /data-page\s*=\s*["'].*?"version"\s*:\s*"([a-f0-9]{32,})"/
+          /X-Inertia-Version["']?\s*[:=]\s*["']([a-f0-9]{32,})["']/
         ];
         
         for (let i = 0; i < patterns.length; i++) {
           const match = iframeData.iframeHtml.match(patterns[i]);
           if (match && match[1]) {
             version = match[1];
-            console.log(`[TukTukCinema] ✓ Inertia version: ${version}`);
             break;
           }
         }
         
         if (!version) {
           version = '852467c2571830b8584cc9bce61b6cde';
-          console.log(`[TukTukCinema] Using fallback version`);
         }
         
+        console.log(`[TukTukCinema] Inertia version: ${version}`);
+        
         const inertiaHeaders = {
-          ...WORKING_HEADERS,
+          'User-Agent': WORKING_HEADERS['User-Agent'],
+          'Accept': 'application/json',
+          'Accept-Language': 'en-US,en;q=0.9',
           'X-Inertia': 'true',
           'X-Inertia-Version': version,
           'X-Inertia-Partial-Component': 'files/mirror/video',
           'X-Inertia-Partial-Data': 'streams',
           'X-Requested-With': 'XMLHttpRequest',
-          'Referer': iframeData.iframeUrl
+          'Referer': iframeData.iframeUrl,
+          'Origin': 'https://w.megatukmax.xyz'
         };
         
-        console.log('[TukTukCinema] Making Inertia API request...');
-        
         return fetch(iframeData.iframeUrl, { headers: inertiaHeaders })
-          .then(function(apiResponse) {
-            return apiResponse.json();
-          })
+          .then(function(response) { return response.json(); })
           .then(function(apiData) {
             const streams = [];
             
             if (apiData.props && apiData.props.streams && apiData.props.streams.data) {
               const qualities = apiData.props.streams.data;
-              console.log(`[TukTukCinema] ✓ Found ${qualities.length} qualities`);
+              console.log(`[TukTukCinema] ✓ ${qualities.length} qualities`);
               
               for (let i = 0; i < qualities.length; i++) {
                 const quality = qualities[i];
@@ -501,15 +411,20 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
                     
                     if (link) {
                       const driver = mirror.driver || 'Unknown';
-                      console.log(`[TukTukCinema] ✓ Stream: ${label} (${driver})`);
+                      console.log(`[TukTukCinema] ✓ ${label} (${driver})`);
                       
                       streams.push({
-                        name: `TukTuk Cinema - ${label} (${driver})`,
+                        name: `TukTuk - ${label}`,
                         title: iframeData.contentTitle,
                         url: link,
                         quality: label,
                         size: 'Unknown',
-                        headers: WORKING_HEADERS,
+                        headers: {
+                          'User-Agent': WORKING_HEADERS['User-Agent'],
+                          'Accept': '*/*',
+                          'Origin': 'https://w.megatukmax.xyz',
+                          'Referer': iframeData.iframeUrl
+                        },
                         provider: 'tuktukcinema'
                       });
                     }
@@ -519,41 +434,28 @@ function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
             }
             
             if (streams.length === 0) {
-              console.log('[TukTukCinema] ❌ No streams in API response');
               resolve([
-                createDebugStream(
-                  'API returned no streams',
-                  `Found: "${iframeData.contentTitle}"`,
-                  `Searched: "${iframeData.searchTitle}"`
-                )
+                createDebugStream('No streams', 'API returned no data', iframeData.iframeUrl)
               ]);
             } else {
-              console.log(`[TukTukCinema] ===== SUCCESS: ${streams.length} streams =====`);
+              console.log(`[TukTukCinema] ===== ${streams.length} streams =====`);
               resolve(streams);
             }
           });
       })
       .catch(function(error) {
-        if (error.message === 'TMDB Failed' || error.message === 'Handled' || 
-            error.message === 'No results' || error.message === 'Season not found' || 
-            error.message === 'Episode not found' || error.message === 'Season URL missing' || 
-            error.message === 'Episode URL missing' || error.message === 'No episodes' || 
+        if (error.message === 'Handled' || error.message === 'No results' || 
+            error.message === 'Season not found' || error.message === 'Episode not found' ||
+            error.message === 'Episode URL missing' || error.message === 'No episodes' ||
             error.message === 'No URL' || error.message === 'No iframe') {
           return;
         }
-        console.error(`[TukTukCinema] ❌ ERROR: ${error.message}`);
-        resolve([
-          createDebugStream(
-            'Unexpected error',
-            error.message,
-            'Check console logs'
-          )
-        ]);
+        console.error(`[TukTukCinema] ERROR: ${error.message}`);
+        resolve([createDebugStream('Error', error.message, 'See console')]);
       });
   });
 }
 
-// Export for React Native compatibility
 if (typeof module !== 'undefined' && module.exports) {
   module.exports = { getStreams };
 } else {

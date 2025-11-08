@@ -4,7 +4,7 @@
 const cheerio = require('cheerio-without-node-native');
 
 const MAIN_URL = 'https://tuktukcenma.cam';
-const TMDB_API_KEY = '0efa8cc62e7c3e3e54a4f9c9563c4367'; // Public TMDB key
+const TMDB_API_KEY = '70896ffbbb915bc34056a969379c0393'; // Public TMDB key
 
 const WORKING_HEADERS = {
   'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36',

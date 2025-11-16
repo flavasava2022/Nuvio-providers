@@ -1,17 +1,25 @@
 {
-  "scrapers": [
+  "id": "cimanow",
+  "name": "CimaNow",
+  "version": "1.0.0",
+  "description": "Arabic movies and TV series from CimaNow",
+  "logo": "https://cimanow.cc/favicon.ico",
+  "types": ["movie", "series"],
+  "catalogs": [
     {
-      "id": "tuktukcinema",
-      "name": "TukTuk Cinema",
-      "description": "Arabic streaming content including movies, TV series, and anime from TukTuk Cinema",
-      "version": "1.0.0",
-      "author": "Your Name",
-      "supportedTypes": ["movie", "tv"],
-      "filename": "providers/tuktukcinema.js",
-      "enabled": true,
-      "formats": ["mkv", "mp4", "m3u8"],
-      "logo": "https://tuktukcenma.cam/favicon.ico",
-      "contentLanguage": ["ar", "en"]
+      "id": "cimanow_movies",
+      "type": "movie",
+      "name": "CimaNow Movies"
+    },
+    {
+      "id": "cimanow_series",
+      "type": "series",
+      "name": "CimaNow Series"
+    },
+    {
+      "id": "cimanow_arabic",
+      "type": "movie",
+      "name": "Arabic Content"
     }
   ]
 }

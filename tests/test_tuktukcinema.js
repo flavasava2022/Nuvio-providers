@@ -1,5 +1,5 @@
 // Test file for TukTuk Cinema provider
-const { getStreams } = require('../providers/tuktukcinema.js');
+const { getStreams } = require('../providers/cimanow.js');
 
 console.log('=================================');
 console.log('Testing TukTuk Cinema Provider');
